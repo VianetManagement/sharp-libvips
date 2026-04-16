@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+## Copyright 2017 Lovell Fuller and others.
+## SPDX-License-Identifier: Apache-2.0
+
 # Dependency version numbers
 source ./versions.properties
 
@@ -9,6 +12,7 @@ CURL="curl --silent --location --retry 3 --retry-max-time 30"
 
 # Check for newer versions
 ALL_AT_VERSION_LATEST=true
+UPDATES=()
 version_latest() {
   VERSION_SELECTOR="stable_versions"
   if [[ "$4" == *"unstable"* ]]; then
@@ -19,9 +23,11 @@ version_latest() {
   else
     VERSION_LATEST=$($CURL "https://release-monitoring.org/api/v2/versions/?project_id=$3" | jq -j ".$VERSION_SELECTOR[0]" | tr '_' '.')
   fi
-  if [ "$VERSION_LATEST" != "$2" ]; then
+  if [ "$VERSION_LATEST" != "" ] && [ "$VERSION_LATEST" != "$2" ]; then
     ALL_AT_VERSION_LATEST=false
-    echo "$1 version $2 has been superseded by $VERSION_LATEST"
+    VERSION_VAR=$(echo "VERSION_$1" | tr [:lower:]- [:upper:]_)
+    sed -i "s/^$VERSION_VAR=.*/$VERSION_VAR=$VERSION_LATEST/" versions.properties
+    UPDATES+=("$1")
   fi
   sleep 1
 }
@@ -38,7 +44,7 @@ version_latest "freetype" "$VERSION_FREETYPE" "854"
 version_latest "fribidi" "$VERSION_FRIBIDI" "fribidi/fribidi"
 version_latest "glib" "$VERSION_GLIB" "10024" "unstable"
 version_latest "harfbuzz" "$VERSION_HARFBUZZ" "1299"
-version_latest "heif" "$VERSION_HEIF" "strukturag/libheif"
+#version_latest "heif" "$VERSION_HEIF" "strukturag/libheif" # use commit SHA until next tagged release
 version_latest "highway" "$VERSION_HWY" "205809"
 version_latest "lcms" "$VERSION_LCMS" "9815"
 #version_latest "mozjpeg" "$VERSION_MOZJPEG" "mozilla/mozjpeg" # use commit SHA until next tagged release
@@ -48,10 +54,11 @@ version_latest "png" "$VERSION_PNG" "1705"
 version_latest "proxy-libintl" "$VERSION_PROXY_LIBINTL" "frida/proxy-libintl"
 version_latest "rsvg" "$VERSION_RSVG" "5420" "unstable"
 version_latest "tiff" "$VERSION_TIFF" "1738"
-version_latest "uhdr" "$VERSION_UHDR" "375187"
-version_latest "vips" "$VERSION_VIPS" "5097"
+#version_latest "uhdr" "$VERSION_UHDR" "375187" # use commit SHA until next tagged release
 version_latest "webp" "$VERSION_WEBP" "1761"
 version_latest "xml2" "$VERSION_XML2" "1783"
 version_latest "zlib-ng" "$VERSION_ZLIB_NG" "115592"
 
-if [ "$ALL_AT_VERSION_LATEST" = "false" ]; then exit 1; fi
+if [ "$ALL_AT_VERSION_LATEST" = "false" ]; then
+  echo "Dependency updates: ${UPDATES[*]}"
+fi

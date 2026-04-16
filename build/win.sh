@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+## Copyright 2017 Lovell Fuller and others.
+## SPDX-License-Identifier: Apache-2.0
+
 # Dependency version numbers
 source /packaging/versions.properties
 
@@ -18,10 +21,10 @@ case ${PLATFORM} in
     ARCH=arm64
     ;;
   *x64)
-    ARCH=w64
+    ARCH=x64
     ;;
   *ia32)
-    ARCH=w32
+    ARCH=x86
     ;;
 esac
 

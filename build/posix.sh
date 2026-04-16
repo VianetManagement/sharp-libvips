@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+## Copyright 2017 Lovell Fuller and others.
+## SPDX-License-Identifier: Apache-2.0
+
 # Dependency version numbers
 if [ -f /packaging/versions.properties ]; then
   source /packaging/versions.properties
@@ -24,6 +27,7 @@ case ${PLATFORM} in
     PACKAGE=/packaging
     ROOT=/root
     VIPS_DEP=libvips.so.42
+    VIPS_CPP_DEP=libvips-cpp.so.$(without_prerelease $VERSION_VIPS)
     ;;
   darwin*)
     DARWIN=true
@@ -32,6 +36,7 @@ case ${PLATFORM} in
     PACKAGE=$PWD
     ROOT=$PWD/platforms/$PLATFORM
     VIPS_DEP=libvips.42.dylib
+    VIPS_CPP_DEP=libvips-cpp.$(without_prerelease $VERSION_VIPS).dylib
     ;;
 esac
 
@@ -39,14 +44,13 @@ mkdir ${DEPS}
 mkdir ${TARGET}
 
 # Default optimisation level is for binary size (-Os)
-# Overriden to performance (-O3) for select dependencies that benefit
+# Overridden to performance (-O3) for select dependencies that benefit
 export FLAGS+=" -Os -fPIC"
 
-# Force "new" C++11 ABI compliance
 # Remove async exception unwind/backtrace tables
 # Allow linker to remove unused sections
 if [ "$LINUX" = true ]; then
-  export FLAGS+=" -D_GLIBCXX_USE_CXX11_ABI=1 -fno-asynchronous-unwind-tables -ffunction-sections -fdata-sections"
+  export FLAGS+=" -fno-asynchronous-unwind-tables -ffunction-sections -fdata-sections"
 fi
 
 # Common build paths and flags
@@ -174,8 +178,6 @@ meson install -C _build --tag devel
 mkdir ${DEPS}/aom
 $CURL https://storage.googleapis.com/aom-releases/libaom-${VERSION_AOM}.tar.gz | tar xzC ${DEPS}/aom --strip-components=1
 cd ${DEPS}/aom
-# [PATCH] cmake: fix nasm detection w/3.0
-$CURL https://github.com/m-ab-s/aom/commit/6d2b7f71b98bfa28e372b1f2d85f137280bdb3de.patch | patch -p1
 mkdir aom_build
 cd aom_build
 AOM_AS_FLAGS="${FLAGS}" cmake -G"Unix Makefiles" \
@@ -186,17 +188,34 @@ AOM_AS_FLAGS="${FLAGS}" cmake -G"Unix Makefiles" \
   ..
 make install/strip
 
-mkdir ${DEPS}/heif
-$CURL https://github.com/strukturag/libheif/releases/download/v${VERSION_HEIF}/libheif-${VERSION_HEIF}.tar.gz | tar xzC ${DEPS}/heif --strip-components=1
-cd ${DEPS}/heif
+mkdir ${DEPS}/de265
+$CURL https://github.com/strukturag/libde265/releases/download/v${VERSION_DE265}/libde265-${VERSION_DE265}.tar.gz | tar xzC ${DEPS}/de265 --strip-components=1
+cd ${DEPS}/de265
 CFLAGS="${CFLAGS} -O3" CXXFLAGS="${CXXFLAGS} -O3" cmake -G"Unix Makefiles" \
   -DCMAKE_TOOLCHAIN_FILE=${ROOT}/Toolchain.cmake -DCMAKE_INSTALL_PREFIX=${TARGET} -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_SHARED_LIBS=FALSE -DBUILD_TESTING=0 -DENABLE_PLUGIN_LOADING=0 -DWITH_EXAMPLES=0 -DWITH_LIBDE265=0 -DWITH_X265=0
+  -DBUILD_SHARED_LIBS=FALSE -DENABLE_ENCODER=0 -DENABLE_SDL=0 -DENABLE_DECODER=1 -DBUILD_TESTING=0
+# Build only the de265 static library target — skip dec265 example tool which
+# fails to link with the cross-compilation toolchain's thread implementation.
+# Create a dummy dec265 so cmake --install doesn't fail looking for it.
+cmake --build . --target de265
+mkdir -p dec265 && touch dec265/dec265
+cmake --install . --strip
+
+mkdir ${DEPS}/heif
+$CURL https://github.com/strukturag/libheif/archive/${VERSION_HEIF}.tar.gz | tar xzC ${DEPS}/heif --strip-components=1
+cd ${DEPS}/heif
+# [PATCH] AOM/Kvazaar/Rav1e/SVT/uvg266/vvenc: fix memory leak when encoder is reused for alpha encoding
+$CURL https://patch-diff.githubusercontent.com/raw/strukturag/libheif/pull/1732.patch | patch -p1
+CFLAGS="${CFLAGS} -O3" CXXFLAGS="${CXXFLAGS} -O3" cmake -G"Unix Makefiles" \
+  -DCMAKE_TOOLCHAIN_FILE=${ROOT}/Toolchain.cmake -DCMAKE_INSTALL_PREFIX=${TARGET} -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_SHARED_LIBS=FALSE -DBUILD_TESTING=0 -DENABLE_PLUGIN_LOADING=0 -DWITH_EXAMPLES=0 -DWITH_LIBDE265=1 -DWITH_X265=0
 make install/strip
 
 mkdir ${DEPS}/jpeg
 $CURL https://github.com/mozilla/mozjpeg/archive/${VERSION_MOZJPEG}.tar.gz | tar xzC ${DEPS}/jpeg --strip-components=1
 cd ${DEPS}/jpeg
+# [PATCH] fix: use saturating arithmetic in SIMD FDCT to prevent overflow
+$CURL https://github.com/mozilla/mozjpeg/commit/f90668e0e4fb79c81e1f24a0ccc0e2090af761bf.patch | patch -p1
 # Use libjpeg-turbo behaviour by default
 sed -i'.bak' 's/JCP_MAX_COMPRESSION/JCP_FASTEST/' jcapimin.c
 cmake -G"Unix Makefiles" \
@@ -288,15 +307,9 @@ $CURL https://github.com/harfbuzz/harfbuzz/archive/${VERSION_HARFBUZZ}.tar.gz | 
 cd ${DEPS}/harfbuzz
 meson setup _build --default-library=static --buildtype=release --strip --prefix=${TARGET} ${MESON} \
   -Dgobject=disabled -Dicu=disabled -Dtests=disabled -Dintrospection=disabled -Ddocs=disabled -Dbenchmark=disabled -Dutilities=disabled \
+  -Draster=disabled -Dvector=disabled -Dsubset=disabled -Dgpu=disabled -Dgpu_demo=disabled \
   ${DARWIN:+-Dcoretext=enabled}
 meson install -C _build --tag devel
-
-# pkg-config provided by Amazon Linux 2 doesn't support circular `Requires` dependencies.
-# https://bugs.freedesktop.org/show_bug.cgi?id=7331
-# https://gitlab.freedesktop.org/pkg-config/pkg-config/-/commit/6d6dd43e75e2bc82cfe6544f8631b1bef6e1cf45
-# TODO(kleisauke): Remove when Amazon Linux 2 reaches EOL.
-sed -i'.bak' "/^Requires:/s/ freetype2.*,//" ${TARGET}/lib/pkgconfig/harfbuzz.pc
-sed -i'.bak' "/^Libs:/s/$/ -lfreetype/" ${TARGET}/lib/pkgconfig/harfbuzz.pc
 
 build_freetype -Dharfbuzz=enabled
 
@@ -358,14 +371,10 @@ CFLAGS="${CFLAGS} -O3" meson setup _build --default-library=static --buildtype=r
 meson install -C _build --tag devel
 
 mkdir ${DEPS}/uhdr
-$CURL https://github.com/google/libultrahdr/archive/v${VERSION_UHDR}.tar.gz | tar xzC ${DEPS}/uhdr --strip-components=1
+$CURL https://github.com/google/libultrahdr/archive/${VERSION_UHDR}.tar.gz | tar xzC ${DEPS}/uhdr --strip-components=1
 cd ${DEPS}/uhdr
-# [PATCH] improper use of clamp macro
-$CURL https://github.com/google/libultrahdr/commit/5ed39d67cd31d254e84ebf76b03d4b7bcc12e2f7.patch | patch -p1
-# [PATCH] Add ppc64le and s390x to recognized architectures
-$CURL https://github.com/google/libultrahdr/pull/376.patch | patch -p1
-# Avoid architecture-specific compile flags
-sed -i'.bak' '/add_compile_options(-[mf]/d' CMakeLists.txt
+# [PATCH] Remove platform and architecture detection logic
+$CURL https://patch-diff.githubusercontent.com/raw/google/libultrahdr/pull/383.patch | patch -p1
 # Ensure install targets are enabled when cross-compiling
 sed -i'.bak' 's/CMAKE_CROSSCOMPILING AND UHDR_ENABLE_INSTALL/FALSE/' CMakeLists.txt
 CFLAGS="${CFLAGS} -O3" CXXFLAGS="${CXXFLAGS} -O3" cmake -G"Unix Makefiles" \
@@ -377,7 +386,20 @@ mkdir ${DEPS}/vips
 $CURL https://github.com/libvips/libvips/releases/download/v${VERSION_VIPS}/vips-${VERSION_VIPS}.tar.xz | tar xJC ${DEPS}/vips --strip-components=1
 cd ${DEPS}/vips
 # Disable HBR support in heifsave
-$CURL https://github.com/libvips/build-win64-mxe/raw/v${VERSION_VIPS}/build/patches/vips-8-heifsave-disable-hbr-support.patch | patch -p1
+$CURL https://raw.githubusercontent.com/libvips/build-win64-mxe/v${VERSION_VIPS}/build/patches/vips-8-heifsave-disable-hbr-support.patch | patch -p1
+# Link libvips.so statically into libvips-cpp.so
+sed -i'.bak' "s/library('vips'/static_&/" libvips/meson.build
+sed -i'.bak' "/version: library_version/{N;d;}" libvips/meson.build
+if [ "$LINUX" = true ]; then
+  # Ensure libvips-cpp.so is linked with -z nodelete
+  sed -i'.bak' "/gnu_symbol_visibility: 'hidden',/a link_args: nodelete_link_args," cplusplus/meson.build
+  # Ensure symbols from external libs (except for libglib-2.0.a and libgobject-2.0.a) are not exposed
+  EXCLUDE_LIBS=$(find ${TARGET}/lib -maxdepth 1 -name '*.a' ! -name 'libglib-2.0.a' ! -name 'libgobject-2.0.a' -printf "-Wl,--exclude-libs=%f ")
+  EXCLUDE_LIBS=${EXCLUDE_LIBS%?}
+  # Localize the g_param_spec_types symbol to avoid collisions with shared libraries
+  # See: https://github.com/lovell/sharp/issues/2535#issuecomment-766400693
+  printf "{local:g_param_spec_types;};" > vips.map
+fi
 # Disable building man pages, gettext po files, tools, and (fuzz-)tests
 sed -i'.bak' "/subdir('man')/{N;N;N;N;d;}" meson.build
 CFLAGS="${CFLAGS} -O3" CXXFLAGS="${CXXFLAGS} -O3" meson setup _build --default-library=shared --buildtype=release --strip --prefix=${TARGET} ${MESON} \
@@ -429,7 +451,12 @@ function copydeps {
 }
 
 cd ${TARGET}/lib
-copydeps ${VIPS_DEP} ${TARGET}/lib-filtered
+if [ "$LINUX" = true ]; then
+  # Upstream quality checks (non-fatal for our fork — the library works without these)
+  readelf -Wd ${VIPS_CPP_DEP} | grep -qF NODELETE || echo "WARNING: $VIPS_CPP_DEP was not linked with -z nodelete"
+  readelf -Ws ${VIPS_CPP_DEP} | c++filt | grep -qF "::__cxx11::" || echo "WARNING: $VIPS_CPP_DEP may use the C++03 ABI"
+fi
+copydeps ${VIPS_CPP_DEP} ${TARGET}/lib-filtered
 
 # Create JSON file of version numbers
 cd ${TARGET}
@@ -446,6 +473,7 @@ printf "{\n\
   \"fribidi\": \"${VERSION_FRIBIDI}\",\n\
   \"glib\": \"${VERSION_GLIB}\",\n\
   \"harfbuzz\": \"${VERSION_HARFBUZZ}\",\n\
+  \"de265\": \"${VERSION_DE265}\",\n\
   \"heif\": \"${VERSION_HEIF}\",\n\
   \"highway\": \"${VERSION_HWY}\",\n\
   \"imagequant\": \"${VERSION_IMAGEQUANT}\",\n\
