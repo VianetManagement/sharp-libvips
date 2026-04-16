@@ -27,7 +27,7 @@ case ${PLATFORM} in
     PACKAGE=/packaging
     ROOT=/root
     VIPS_DEP=libvips.so.42
-    VIPS_CPP_DEP=libvips-cpp.so.$(without_prerelease $VERSION_VIPS)
+    VIPS_CPP_DEP=libvips-cpp.so.42
     ;;
   darwin*)
     DARWIN=true
@@ -36,7 +36,7 @@ case ${PLATFORM} in
     PACKAGE=$PWD
     ROOT=$PWD/platforms/$PLATFORM
     VIPS_DEP=libvips.42.dylib
-    VIPS_CPP_DEP=libvips-cpp.$(without_prerelease $VERSION_VIPS).dylib
+    VIPS_CPP_DEP=libvips-cpp.42.dylib
     ;;
 esac
 
