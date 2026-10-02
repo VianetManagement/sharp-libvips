@@ -26,8 +26,7 @@ case ${PLATFORM} in
     TARGET=/target
     PACKAGE=/packaging
     ROOT=/root
-    VIPS_DEP=libvips.so.42
-    VIPS_CPP_DEP=libvips-cpp.so.42
+    VIPS_CPP_DEP=libvips-cpp.so.$(without_prerelease $VERSION_VIPS)
     ;;
   darwin*)
     DARWIN=true
@@ -35,8 +34,7 @@ case ${PLATFORM} in
     TARGET=$PWD/target
     PACKAGE=$PWD
     ROOT=$PWD/platforms/$PLATFORM
-    VIPS_DEP=libvips.42.dylib
-    VIPS_CPP_DEP=libvips-cpp.42.dylib
+    VIPS_CPP_DEP=libvips-cpp.$(without_prerelease $VERSION_VIPS).dylib
     ;;
 esac
 
@@ -182,7 +180,7 @@ mkdir aom_build
 cd aom_build
 AOM_AS_FLAGS="${FLAGS}" cmake -G"Unix Makefiles" \
   -DCMAKE_TOOLCHAIN_FILE=${ROOT}/Toolchain.cmake -DCMAKE_INSTALL_PREFIX=${TARGET} -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=MinSizeRel \
-  -DBUILD_SHARED_LIBS=FALSE -DENABLE_DOCS=0 -DENABLE_TESTS=0 -DENABLE_TESTDATA=0 -DENABLE_TOOLS=0 -DENABLE_EXAMPLES=0 \
+  -DBUILD_SHARED_LIBS=FALSE -DENABLE_DOCS=0 -DENABLE_TESTS=0 -DENABLE_TESTDATA=0 -DENABLE_TOOLS=0 -DENABLE_APPS=0 -DENABLE_EXAMPLES=0 \
   -DCONFIG_PIC=1 -DENABLE_NASM=1 ${WITHOUT_NEON:+-DENABLE_NEON=0} -DENABLE_RVV=0 \
   -DCONFIG_AV1_HIGHBITDEPTH=1 -DCONFIG_WEBM_IO=0 \
   ..
@@ -193,22 +191,15 @@ $CURL https://github.com/strukturag/libde265/releases/download/v${VERSION_DE265}
 cd ${DEPS}/de265
 CFLAGS="${CFLAGS} -O3" CXXFLAGS="${CXXFLAGS} -O3" cmake -G"Unix Makefiles" \
   -DCMAKE_TOOLCHAIN_FILE=${ROOT}/Toolchain.cmake -DCMAKE_INSTALL_PREFIX=${TARGET} -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_SHARED_LIBS=FALSE -DENABLE_ENCODER=0 -DENABLE_SDL=0 -DENABLE_DECODER=1 -DBUILD_TESTING=0
-# Build only the de265 static library target — skip dec265 example tool which
-# fails to link with the cross-compilation toolchain's thread implementation.
-# Create a dummy dec265 so cmake --install doesn't fail looking for it.
-cmake --build . --target de265
-mkdir -p dec265 && touch dec265/dec265
-cmake --install . --strip
+  -DBUILD_SHARED_LIBS=FALSE -DENABLE_ENCODER=0 -DENABLE_SDL=0 -DENABLE_DECODER=0 -DBUILD_TESTING=0
+make install/strip
 
 mkdir ${DEPS}/heif
-$CURL https://github.com/strukturag/libheif/archive/${VERSION_HEIF}.tar.gz | tar xzC ${DEPS}/heif --strip-components=1
+$CURL https://github.com/strukturag/libheif/releases/download/v${VERSION_HEIF}/libheif-${VERSION_HEIF}.tar.gz | tar xzC ${DEPS}/heif --strip-components=1
 cd ${DEPS}/heif
-# [PATCH] AOM/Kvazaar/Rav1e/SVT/uvg266/vvenc: fix memory leak when encoder is reused for alpha encoding
-$CURL https://patch-diff.githubusercontent.com/raw/strukturag/libheif/pull/1732.patch | patch -p1
 CFLAGS="${CFLAGS} -O3" CXXFLAGS="${CXXFLAGS} -O3" cmake -G"Unix Makefiles" \
   -DCMAKE_TOOLCHAIN_FILE=${ROOT}/Toolchain.cmake -DCMAKE_INSTALL_PREFIX=${TARGET} -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_SHARED_LIBS=FALSE -DBUILD_TESTING=0 -DENABLE_PLUGIN_LOADING=0 -DWITH_EXAMPLES=0 -DWITH_LIBDE265=1 -DWITH_X265=0
+  -DBUILD_SHARED_LIBS=FALSE -DBUILD_DOCUMENTATION=0 -DBUILD_TESTING=0 -DENABLE_PLUGIN_LOADING=0 -DWITH_EXAMPLES=0 -DWITH_LIBDE265=1 -DWITH_X265=0
 make install/strip
 
 mkdir ${DEPS}/jpeg
@@ -244,19 +235,19 @@ cd ${DEPS}/webp
 make install-strip bin_PROGRAMS= noinst_PROGRAMS= man_MANS=
 
 mkdir ${DEPS}/tiff
-$CURL https://download.osgeo.org/libtiff/tiff-${VERSION_TIFF}.tar.gz | tar xzC ${DEPS}/tiff --strip-components=1
+$CURL https://gitlab.com/libtiff/libtiff/-/archive/v${VERSION_TIFF}/libtiff-v${VERSION_TIFF}.tar.gz | tar xzC ${DEPS}/tiff --strip-components=1
 cd ${DEPS}/tiff
-# Propagate -pthread into CFLAGS to ensure WebP support
-CFLAGS="${CFLAGS} -pthread" ./configure --host=${CHOST} --prefix=${TARGET} --enable-static --disable-shared --disable-dependency-tracking \
-  --disable-tools --disable-tests --disable-contrib --disable-docs --disable-mdi --disable-pixarlog --disable-old-jpeg --disable-cxx --disable-lzma --disable-zstd --disable-libdeflate
-make install-strip noinst_PROGRAMS= dist_doc_DATA=
+cmake -G"Unix Makefiles" \
+  -DCMAKE_TOOLCHAIN_FILE=${ROOT}/Toolchain.cmake -DCMAKE_INSTALL_PREFIX=${TARGET} -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=MinSizeRel \
+  -DBUILD_SHARED_LIBS=FALSE -DCMath_HAVE_LIBC_POW=1 \
+  -Dtiff-contrib=OFF -Dtiff-cxx=OFF -Dtiff-docs=OFF -Dtiff-tests=OFF -Dtiff-tools=OFF -Dmdi=OFF \
+  -Djbig=OFF -Dlerc=OFF -Dlibdeflate=OFF -Dlzma=OFF -Dold-jpeg=OFF -Dpixarlog=OFF -Dtiff-opengl=OFF -Dzstd=OFF
+make install/strip
 
 if [ -z "$WITHOUT_HIGHWAY" ]; then
-  mkdir ${DEPS}/hwy
-  $CURL https://github.com/google/highway/archive/${VERSION_HWY}.tar.gz | tar xzC ${DEPS}/hwy --strip-components=1
-  cd ${DEPS}/hwy
-  # [PATCH] workaround for inadvertent SVE codegen on GCC<14
-  $CURL https://github.com/google/highway/commit/ad48f2bf298bac247288c8399a5c0e9a40ed8246.patch | patch -p1
+  mkdir ${DEPS}/highway
+  $CURL https://github.com/google/highway/archive/${VERSION_HIGHWAY}.tar.gz | tar xzC ${DEPS}/highway --strip-components=1
+  cd ${DEPS}/highway
   CFLAGS="${CFLAGS} -O3" CXXFLAGS="${CXXFLAGS} -O3" cmake -G"Unix Makefiles" \
     -DCMAKE_TOOLCHAIN_FILE=${ROOT}/Toolchain.cmake -DCMAKE_INSTALL_PREFIX=${TARGET} -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_SHARED_LIBS=FALSE -DBUILD_TESTING=0 -DHWY_ENABLE_CONTRIB=0 -DHWY_ENABLE_EXAMPLES=0 -DHWY_ENABLE_TESTS=0
@@ -298,6 +289,8 @@ cd ${DEPS}/fontconfig
 sed -i'.bak' "/subdir('its')/d" meson.build
 # Silence FcInit warnings
 sed -i'.bak' "/using without calling FcInit/d" src/fcobjs.c
+# Prevent creation of versioned cache symlinks
+sed -i'.bak' "s/cachemincompat/cacheversion/" fontconfig/meson.build
 meson setup _build --default-library=static --buildtype=release --strip --prefix=${TARGET} ${MESON} \
   -Dcache-build=disabled -Ddoc=disabled -Dnls=disabled -Dtests=disabled -Dtools=disabled
 meson install -C _build --tag devel
@@ -356,6 +349,8 @@ sed -i'.bak' "/cairo-rs = /s/, \"pdf\", \"ps\"//" {librsvg-c,rsvg}/Cargo.toml
 sed -i'.bak' "/^if host_system in \['windows'/s/, 'linux'//" meson.build
 # Regenerate the lockfile after making the above changes
 cargo update --workspace
+# [PATCH] Ensure embedded image memory limits are enforced
+$CURL https://github.com/GNOME/librsvg/commit/9106011db93d701728ac2c9da50c9ab2c1bb5dc6.patch | patch -p1
 # Remove the --static flag from the PKG_CONFIG env since Rust does not
 # parse that correctly.
 PKG_CONFIG=${PKG_CONFIG/ --static/} meson setup _build --default-library=static --buildtype=plain --strip --prefix=${TARGET} ${MESON} \
@@ -371,7 +366,7 @@ CFLAGS="${CFLAGS} -O3" meson setup _build --default-library=static --buildtype=r
 meson install -C _build --tag devel
 
 mkdir ${DEPS}/uhdr
-$CURL https://github.com/google/libultrahdr/archive/${VERSION_UHDR}.tar.gz | tar xzC ${DEPS}/uhdr --strip-components=1
+$CURL https://github.com/google/libultrahdr/archive/v${VERSION_UHDR}.tar.gz | tar xzC ${DEPS}/uhdr --strip-components=1
 cd ${DEPS}/uhdr
 # [PATCH] Remove platform and architecture detection logic
 $CURL https://patch-diff.githubusercontent.com/raw/google/libultrahdr/pull/383.patch | patch -p1
@@ -379,14 +374,14 @@ $CURL https://patch-diff.githubusercontent.com/raw/google/libultrahdr/pull/383.p
 sed -i'.bak' 's/CMAKE_CROSSCOMPILING AND UHDR_ENABLE_INSTALL/FALSE/' CMakeLists.txt
 CFLAGS="${CFLAGS} -O3" CXXFLAGS="${CXXFLAGS} -O3" cmake -G"Unix Makefiles" \
   -DCMAKE_TOOLCHAIN_FILE=${ROOT}/Toolchain.cmake -DCMAKE_INSTALL_PREFIX=${TARGET} -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_SHARED_LIBS=FALSE -DUHDR_BUILD_EXAMPLES=FALSE -DUHDR_MAX_DIMENSION=65500 ${WITHOUT_NEON:+-DUHDR_ENABLE_INTRINSICS=FALSE}
+  -DBUILD_SHARED_LIBS=FALSE -DUHDR_BUILD_EXAMPLES=FALSE -DUHDR_ENABLE_HEIF=FALSE -DUHDR_MAX_DIMENSION=65500 ${WITHOUT_NEON:+-DUHDR_ENABLE_INTRINSICS=FALSE}
 make install/strip
 
 mkdir ${DEPS}/vips
-$CURL https://github.com/libvips/libvips/releases/download/v${VERSION_VIPS}/vips-${VERSION_VIPS}.tar.xz | tar xJC ${DEPS}/vips --strip-components=1
+$CURL https://github.com/libvips/libvips/releases/download/v${VERSION_VIPS}/vips-$(without_prerelease $VERSION_VIPS).tar.xz | tar xJC ${DEPS}/vips --strip-components=1
 cd ${DEPS}/vips
-# Disable HBR support in heifsave
-$CURL https://raw.githubusercontent.com/libvips/build-win64-mxe/v${VERSION_VIPS}/build/patches/vips-8-heifsave-disable-hbr-support.patch | patch -p1
+# Use version number in SONAME
+$CURL https://gist.githubusercontent.com/lovell/313a6901e9db1bf285f2a1f1180499e4/raw/3988223c7dfa4d22745d9392034b0117abef1446/libvips-cpp-soversion.patch | patch -p1
 # Link libvips.so statically into libvips-cpp.so
 sed -i'.bak' "s/library('vips'/static_&/" libvips/meson.build
 sed -i'.bak' "/version: library_version/{N;d;}" libvips/meson.build
@@ -406,7 +401,8 @@ CFLAGS="${CFLAGS} -O3" CXXFLAGS="${CXXFLAGS} -O3" meson setup _build --default-l
   -Ddeprecated=false -Dexamples=false -Dauto_features=enabled -Dintrospection=disabled -Dmodules=disabled -Dcfitsio=disabled -Dfftw=disabled \
   -Djpeg-xl=disabled ${WITHOUT_HIGHWAY:+-Dhighway=disabled} -Dorc=disabled -Dmagick=disabled -Dmatio=disabled -Dnifti=disabled -Dopenexr=disabled \
   -Dopenjpeg=disabled -Dopenslide=disabled -Dpdfium=disabled -Dpoppler=disabled -Dquantizr=disabled -Draw=disabled -Dspng=disabled \
-  -Dppm=false -Danalyze=false -Dradiance=false
+  -Dppm=false -Danalyze=false -Dradiance=false \
+  ${LINUX:+-Dcpp_link_args="$LDFLAGS -Wl,-Bsymbolic-functions -Wl,--version-script=$DEPS/vips/vips.map $EXCLUDE_LIBS"}
 meson install -C _build --tag runtime,devel
 
 # Cleanup
@@ -452,9 +448,10 @@ function copydeps {
 
 cd ${TARGET}/lib
 if [ "$LINUX" = true ]; then
-  # Upstream quality checks (non-fatal for our fork — the library works without these)
-  readelf -Wd ${VIPS_CPP_DEP} | grep -qF NODELETE || echo "WARNING: $VIPS_CPP_DEP was not linked with -z nodelete"
-  readelf -Ws ${VIPS_CPP_DEP} | c++filt | grep -qF "::__cxx11::" || echo "WARNING: $VIPS_CPP_DEP may use the C++03 ABI"
+  # Check that we really linked with -z nodelete
+  readelf -Wd ${VIPS_CPP_DEP} | grep -qF NODELETE || (echo "$VIPS_CPP_DEP was not linked with -z nodelete" && exit 1)
+  # Check that we really use the "new" C++11 ABI
+  readelf -Ws ${VIPS_CPP_DEP} | c++filt | grep -qF "::__cxx11::" || (echo "$VIPS_CPP_DEP mistakenly uses the C++03 ABI" && exit 1)
 fi
 copydeps ${VIPS_CPP_DEP} ${TARGET}/lib-filtered
 
@@ -465,6 +462,7 @@ printf "{\n\
   \"archive\": \"${VERSION_ARCHIVE}\",\n\
   \"cairo\": \"${VERSION_CAIRO}\",\n\
   \"cgif\": \"${VERSION_CGIF}\",\n\
+  \"de265\": \"${VERSION_DE265}\",\n\
   \"exif\": \"${VERSION_EXIF}\",\n\
   \"expat\": \"${VERSION_EXPAT}\",\n\
   \"ffi\": \"${VERSION_FFI}\",\n\
@@ -473,9 +471,8 @@ printf "{\n\
   \"fribidi\": \"${VERSION_FRIBIDI}\",\n\
   \"glib\": \"${VERSION_GLIB}\",\n\
   \"harfbuzz\": \"${VERSION_HARFBUZZ}\",\n\
-  \"de265\": \"${VERSION_DE265}\",\n\
   \"heif\": \"${VERSION_HEIF}\",\n\
-  \"highway\": \"${VERSION_HWY}\",\n\
+  \"highway\": \"${VERSION_HIGHWAY}\",\n\
   \"imagequant\": \"${VERSION_IMAGEQUANT}\",\n\
   \"lcms\": \"${VERSION_LCMS}\",\n\
   \"mozjpeg\": \"${VERSION_MOZJPEG}\",\n\

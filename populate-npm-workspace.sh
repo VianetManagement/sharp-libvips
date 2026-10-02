@@ -47,6 +47,21 @@ generate_index() {
   done
 }
 
+without_prerelease() {
+  echo "${1%-[[:alnum:]]*}"
+}
+
+patch_pkg_exports() {
+  PACKAGE="$1"
+  pushd "npm/$PACKAGE"
+  if [[ "$PACKAGE" == "darwin"* ]]; then
+    npm pkg set "exports[./binary]"="./lib/libvips-cpp.$(without_prerelease $VERSION_VIPS).dylib"
+  elif [[ "$PACKAGE" == "linux"* ]]; then
+    npm pkg set "exports[./binary]"="./lib/libvips-cpp.so.$(without_prerelease $VERSION_VIPS)"
+  fi
+  popd
+}
+
 remove_unused() {
   PACKAGE="$1"
   if [[ "$PACKAGE" != "dev"* ]]; then
@@ -56,7 +71,7 @@ remove_unused() {
 }
 
 # Download and extract per-platform binaries
-PLATFORMS=$(ls platforms --ignore=*armv7 --ignore=win32*)
+PLATFORMS=$(ls platforms --ignore=win32*)
 for platform in $PLATFORMS; do
   extract "$platform"
 done
@@ -78,5 +93,6 @@ PACKAGES=$(jq -r '.workspaces[]' "npm/package.json")
 for package in $PACKAGES; do
   generate_readme "$package"
   generate_index "$package"
+  patch_pkg_exports "$package"
   remove_unused "$package"
 done
